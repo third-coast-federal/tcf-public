@@ -146,3 +146,6 @@ This raises an error: `Invalid hierarchy: City "Portland" occurs with State "Mai
   - Fallback if the listener system proves unreliable: Poll the current parameter values once per second and look for mismatches. If any are found, apply as above.
 
 6. The extension configuration dialog includes a button to manually refresh hierarchy data. Otherwise the data is assumed to be static after workbook load.
+
+# HOSTING
+This extension is published in a public GitHub repo. The organization is third-coast-federal and the repo is tcf-public.
