@@ -65,8 +65,7 @@
   });
 
   function openConfigure() {
-    var popupUrl = window.location.origin +
-      window.location.pathname.replace(/[^/]*$/, '') + 'cascading_params_config.html';
+    var popupUrl = 'https://third-coast-federal.github.io/tcf-public/tableau/cascading_params_config.html'
     tableau.extensions.ui.displayDialogAsync(popupUrl, '', { height: 500, width: 500 })
       .catch(function () { /* user closed dialog */ });
   }
