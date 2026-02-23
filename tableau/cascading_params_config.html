@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configure Cascading Parameter Menus</title>
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #333; padding: 16px; }
+    h3 { margin-bottom: 12px; font-size: 15px; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; margin-top: 12px; }
+    select { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    .level-row { display: flex; gap: 6px; align-items: flex-end; margin-bottom: 8px; padding: 8px; background: #f7f7f7; border-radius: 4px; }
+    .level-row select { flex: 2; }
+    .level-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    .level-row .level-num { font-weight: 700; min-width: 16px; padding-bottom: 6px; }
+    .col-headers { display: flex; gap: 6px; padding: 0 8px; margin-bottom: 2px; font-size: 11px; color: #888; font-weight: 600; }
+    .col-headers span:nth-child(1) { min-width: 16px; }
+    .col-headers span:nth-child(2) { flex: 2; }
+    .col-headers span:nth-child(3) { flex: 2; }
+    .col-headers span:nth-child(4) { flex: 1; }
+    .col-headers span:nth-child(5) { min-width: 28px; }
+    .btn-row { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
+    button { padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px; background: #fff; }
+    button.primary { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+    button.primary:disabled { background: #a0c4e8; border-color: #a0c4e8; cursor: default; }
+    button.add { background: #e8e8e8; }
+    button.remove { background: none; border: none; color: #c00; font-size: 16px; padding: 2px 6px; min-width: 28px; }
+    #error { color: #c00; margin-top: 8px; display: none; }
+    #status { color: #888; font-size: 11px; margin-top: 8px; white-space: pre-wrap; }
+    .section { margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h3>Cascading Parameter Menus Configuration</h3>
+
+  <div class="section">
+    <label for="worksheetSelect">Worksheet</label>
+    <select id="worksheetSelect"><option>Loading...</option></select>
+  </div>
+
+  <div class="section">
+    <label>Hierarchy Levels</label>
+    <div class="col-headers">
+      <span></span>
+      <span>Field</span>
+      <span>Parameter</span>
+      <span>Title</span>
+      <span></span>
+    </div>
+    <div id="levels"></div>
+    <button class="add" id="addLevel">+ Add Level</button>
+  </div>
+
+  <div id="error"></div>
+  <div id="status"></div>
+
+  <div class="btn-row">
+    <button id="cancelBtn">Cancel</button>
+    <button class="primary" id="okBtn" disabled>OK</button>
+  </div>
+
+  <script>
+  'use strict';
+  (function () {
+    var worksheets = [];
+    var fields = [];
+    var parameters = [];
+    var levelCount = 0;
+
+    function log(msg) {
+      var el = document.getElementById('status');
+      el.textContent += msg + '\n';
+    }
+
+    $(document).ready(function () {
+      log('Dialog JS loaded. Initializing...');
+
+      if (typeof tableau === 'undefined') {
+        log('ERROR: tableau object is undefined. The Extensions API library failed to load.');
+        return;
+      }
+
+      tableau.extensions.initializeDialogAsync().then(function () {
+        log('initializeDialogAsync resolved.');
+        var dashboard = tableau.extensions.dashboardContent.dashboard;
+
+        // Populate worksheets
+        var wsList = [];
+        for (var i = 0; i < dashboard.worksheets.length; i++) {
+          wsList.push(dashboard.worksheets[i]);
+        }
+        worksheets = wsList;
+        log('Found ' + worksheets.length + ' worksheet(s): ' +
+          worksheets.map(function (w) { return w.name; }).join(', '));
+
+        var wsSelect = $('#worksheetSelect').empty();
+        if (worksheets.length === 0) {
+          wsSelect.append($('<option>').text('(none)'));
+          wsSelect.prop('disabled', true);
+          $('#addLevel').prop('disabled', true);
+          $('#error').text('No worksheets found on this dashboard. Add a worksheet with your hierarchy data to the dashboard, then reopen this dialog.').show();
+          return;
+        }
+        worksheets.forEach(function (ws) {
+          wsSelect.append($('<option>').val(ws.name).text(ws.name));
+        });
+
+        // Restore saved worksheet if present
+        var settings = tableau.extensions.settings.getAll();
+        if (settings.worksheet) {
+          var match = worksheets.find(function (w) { return w.name === settings.worksheet; });
+          if (match) wsSelect.val(settings.worksheet);
+        }
+
+        // Populate parameters (string type, allowableValues.type === 'all')
+        dashboard.getParametersAsync().then(function (params) {
+          log('Found ' + params.length + ' total parameter(s).');
+          parameters = params.filter(function (p) {
+            return p.allowableValues.type === 'all' && p.dataType === 'string';
+          });
+          log(parameters.length + ' eligible (string, accepts all values): ' +
+            parameters.map(function (p) { return p.name; }).join(', '));
+
+          if (parameters.length === 0) {
+            $('#addLevel').prop('disabled', true);
+            $('#error').text('No eligible parameters found. Create string parameters that allow "All" values, then reopen this dialog.').show();
+            return Promise.reject({ message: 'no parameters' });
+          }
+
+          return loadFieldsForWorksheet();
+        }).then(function () {
+          restoreSettings(settings);
+        }).catch(function (err) {
+          log('ERROR in parameter/field loading: ' + err.message);
+        });
+
+        // Worksheet change: reload fields
+        wsSelect.on('change', function () {
+          loadFieldsForWorksheet().then(rebuildLevelDropdowns).catch(function (err) {
+            log('ERROR loading fields: ' + err.message);
+          });
+        });
+
+        $('#addLevel').on('click', addLevel);
+        $('#cancelBtn').on('click', function () {
+          tableau.extensions.ui.closeDialog('');
+        });
+        $('#okBtn').on('click', submit);
+      }).catch(function (err) {
+        log('ERROR: initializeDialogAsync failed: ' + err.message);
+      });
+    });
+
+    function loadFieldsForWorksheet() {
+      var wsName = $('#worksheetSelect').val();
+      var ws = worksheets.find(function (w) { return w.name === wsName; });
+      if (!ws) {
+        log('No worksheet selected or worksheet not found.');
+        fields = [];
+        return Promise.resolve();
+      }
+      log('Loading fields from worksheet "' + wsName + '"...');
+      return ws.getSummaryDataAsync().then(function (dataTable) {
+        fields = [];
+        dataTable.columns.forEach(function (col) {
+          fields.push(col.fieldName);
+        });
+        fields.sort();
+        log('Found ' + fields.length + ' field(s): ' + fields.join(', '));
+      });
+    }
+
+    function restoreSettings(settings) {
+      $('#levels').empty();
+      levelCount = 0;
+
+      if (settings.configured === 'true' && settings.levelCount) {
+        var n = parseInt(settings.levelCount, 10);
+        for (var i = 0; i < n; i++) {
+          addLevel();
+          var row = $('#levels .level-row').last();
+          row.find('.field-select').val(settings['field_' + i] || '');
+          row.find('.param-select').val(settings['param_' + i] || '');
+          row.find('.title-input').val(settings['title_' + i] || '');
+        }
+      } else {
+        // Start with 2 levels only if we have fields and params to populate them
+        if (fields.length >= 2 && parameters.length >= 2) {
+          addLevel();
+          addLevel();
+        }
+      }
+      validateForm();
+    }
+
+    function addLevel() {
+      levelCount++;
+      var idx = levelCount;
+      var row = $('<div class="level-row">');
+      row.append($('<span class="level-num">').text(idx));
+
+      var fieldSel = $('<select class="field-select">');
+      fields.forEach(function (f) {
+        fieldSel.append($('<option>').val(f).text(f));
+      });
+
+      var paramSel = $('<select class="param-select">');
+      parameters.forEach(function (p) {
+        paramSel.append($('<option>').val(p.name).text(p.name));
+      });
+
+      var titleInput = $('<input type="text" class="title-input" placeholder="(use field name)">');
+
+      // Auto-select the first unused field and parameter so new rows
+      // don't default to the same values as existing rows.
+      var usedFields = [];
+      var usedParams = [];
+      $('#levels .level-row').each(function () {
+        usedFields.push($(this).find('.field-select').val());
+        usedParams.push($(this).find('.param-select').val());
+      });
+      var unusedField = fields.find(function (f) { return usedFields.indexOf(f) < 0; });
+      if (unusedField) fieldSel.val(unusedField);
+      var unusedParam = parameters.find(function (p) { return usedParams.indexOf(p.name) < 0; });
+      if (unusedParam) paramSel.val(unusedParam.name);
+
+      var removeBtn = $('<button class="remove" title="Remove">').html('&times;');
+      removeBtn.on('click', function () {
+        row.remove();
+        renumberLevels();
+        validateForm();
+      });
+
+      row.append(fieldSel).append(paramSel).append(titleInput).append(removeBtn);
+      row.find('select').on('change', validateForm);
+      $('#levels').append(row);
+      validateForm();
+    }
+
+    function rebuildLevelDropdowns() {
+      $('#levels .level-row').each(function () {
+        var curField = $(this).find('.field-select').val();
+        var fieldSel = $(this).find('.field-select').empty();
+        fields.forEach(function (f) {
+          fieldSel.append($('<option>').val(f).text(f));
+        });
+        if (fields.indexOf(curField) >= 0) fieldSel.val(curField);
+      });
+      validateForm();
+    }
+
+    function renumberLevels() {
+      levelCount = 0;
+      $('#levels .level-row').each(function () {
+        levelCount++;
+        $(this).find('.level-num').text(levelCount);
+      });
+    }
+
+    function validateForm() {
+      var rows = $('#levels .level-row');
+      var valid = rows.length >= 2;
+      $('#okBtn').prop('disabled', !valid);
+
+      // Check for duplicate field or parameter selections
+      var usedFields = [];
+      var usedParams = [];
+      var hasDupes = false;
+      rows.each(function () {
+        var f = $(this).find('.field-select').val();
+        var p = $(this).find('.param-select').val();
+        if (f !== null && usedFields.indexOf(f) >= 0) hasDupes = true;
+        if (p !== null && usedParams.indexOf(p) >= 0) hasDupes = true;
+        usedFields.push(f);
+        usedParams.push(p);
+      });
+
+      if (hasDupes && rows.length >= 2) {
+        $('#error').text('Each field and parameter must be unique across levels.').show();
+        $('#okBtn').prop('disabled', true);
+      } else if (rows.length >= 2 && usedFields.indexOf(null) >= 0) {
+        $('#error').text('Some dropdowns are empty. Ensure the worksheet has fields and parameters are created.').show();
+        $('#okBtn').prop('disabled', true);
+      } else {
+        $('#error').hide();
+      }
+    }
+
+    function submit() {
+      var s = tableau.extensions.settings;
+      s.erase('configured');
+      s.erase('worksheet');
+      s.erase('levelCount');
+      for (var i = 0; i < 20; i++) {
+        s.erase('field_' + i);
+        s.erase('param_' + i);
+        s.erase('title_' + i);
+      }
+
+      s.set('configured', 'true');
+      s.set('worksheet', $('#worksheetSelect').val());
+
+      var rows = $('#levels .level-row');
+      s.set('levelCount', rows.length.toString());
+      rows.each(function (i) {
+        s.set('field_' + i, $(this).find('.field-select').val());
+        s.set('param_' + i, $(this).find('.param-select').val());
+        s.set('title_' + i, $(this).find('.title-input').val().trim());
+      });
+
+      s.saveAsync().then(function () {
+        tableau.extensions.ui.closeDialog('configured');
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

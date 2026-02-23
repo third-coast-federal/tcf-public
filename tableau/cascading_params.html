@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cascading Parameter Menus</title>
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #333; padding: 6px; overflow: hidden; }
+    #container { display: flex; flex-wrap: nowrap; gap: 6px; align-items: flex-start; width: 100%; }
+    .cascade-col { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
+    .cascade-col label { font-weight: 600; font-size: 11px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cascade-col select { width: 100%; padding: 3px 4px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px; }
+    #message { padding: 8px; }
+    #error { color: #c00; padding: 8px; white-space: pre-wrap; }
+    #refresh-btn { position: fixed; top: 4px; right: 4px; background: none; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 11px; padding: 2px 6px; color: #666; }
+    #refresh-btn:hover { background: #eee; }
+  </style>
+</head>
+<body>
+  <div id="message">Loading...</div>
+  <div id="error" style="display:none;"></div>
+  <div id="container" style="display:none;"></div>
+  <button id="refresh-btn" title="Refresh hierarchy data" style="display:none;">&#x21bb;</button>
+
+<script>
+'use strict';
+(function () {
+  // ── State ──────────────────────────────────────────────────────────────
+  var fieldNames  = [];   // ordered field names from config
+  var paramNames  = [];   // matching parameter names from config
+  var titles      = [];   // display titles per dropdown (falls back to field name)
+  var wsName      = '';    // worksheet name from config
+  var allRows     = [];   // raw hierarchy rows: each is an array of string values
+  var selections  = [];   // current selected value per dropdown (string)
+  var optionLists = [];   // current option arrays per dropdown (string[])
+  var paramObjects = [];  // resolved Tableau Parameter objects
+  var suppressParamListener = false;
+  var pollTimer   = null;
+
+  var ALL = '(All)';
+
+  // ── Initialisation ─────────────────────────────────────────────────────
+  $(document).ready(function () {
+    tableau.extensions.initializeAsync({ configure: openConfigure }).then(function () {
+      var settings = tableau.extensions.settings.getAll();
+      if (settings.configured === 'true') {
+        setup();
+      } else {
+        showMessage('Right-click and choose "Configure" to set up this extension.');
+      }
+
+      // Re-setup when settings change (e.g. after configure dialog closes)
+      tableau.extensions.settings.addEventListener(
+        tableau.TableauEventType.SettingsChanged, function () {
+          var s = tableau.extensions.settings.getAll();
+          if (s.configured === 'true') setup();
+        }
+      );
+    });
+
+    $('#refresh-btn').on('click', function () { loadHierarchyData(); });
+  });
+
+  function openConfigure() {
+    var popupUrl = window.location.origin +
+      window.location.pathname.replace(/[^/]*$/, '') + 'cascading_params_config.html';
+    tableau.extensions.ui.displayDialogAsync(popupUrl, '', { height: 500, width: 500 })
+      .catch(function () { /* user closed dialog */ });
+  }
+
+  // ── Setup from settings ────────────────────────────────────────────────
+  function setup() {
+    var settings = tableau.extensions.settings.getAll();
+    var n = parseInt(settings.levelCount, 10);
+    if (!n || n < 2) { showError('Configuration incomplete. Please reconfigure.'); return; }
+
+    wsName = settings.worksheet;
+    fieldNames = [];
+    paramNames = [];
+    titles = [];
+    for (var i = 0; i < n; i++) {
+      fieldNames.push(settings['field_' + i]);
+      paramNames.push(settings['param_' + i]);
+      var t = (settings['title_' + i] || '').trim();
+      titles.push(t || settings['field_' + i]);
+    }
+
+    resolveParameters().then(function () {
+      loadHierarchyData();
+    });
+  }
+
+  // ── Resolve Tableau parameter objects & attach listeners ───────────────
+  function resolveParameters() {
+    var dashboard = tableau.extensions.dashboardContent.dashboard;
+    paramObjects = [];
+    var promises = paramNames.map(function (name) {
+      return dashboard.findParameterAsync(name).then(function (p) {
+        if (!p) throw new Error('Parameter "' + name + '" not found.');
+        return p;
+      });
+    });
+    return Promise.all(promises).then(function (params) {
+      paramObjects = params;
+      // Attach ParameterChanged listeners for external sync (rule 5)
+      paramObjects.forEach(function (p) {
+        p.addEventListener(tableau.TableauEventType.ParameterChanged, onExternalParamChange);
+      });
+      // Fallback polling (rule 5 fallback)
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(pollForParamChanges, 1000);
+    });
+  }
+
+  // ── Load hierarchy data from worksheet ─────────────────────────────────
+  function loadHierarchyData() {
+    var dashboard = tableau.extensions.dashboardContent.dashboard;
+    var ws = dashboard.worksheets.find(function (w) { return w.name === wsName; });
+    if (!ws) { showError('Worksheet "' + wsName + '" not found.'); return; }
+
+    ws.getSummaryDataAsync().then(function (dataTable) {
+      // Map field names to column indices
+      var colIndices = [];
+      for (var i = 0; i < fieldNames.length; i++) {
+        var col = dataTable.columns.find(function (c) { return c.fieldName === fieldNames[i]; });
+        if (!col) { showError('Field "' + fieldNames[i] + '" not found on worksheet.'); return; }
+        colIndices.push(col.index);
+      }
+
+      // Extract rows (deduplicated)
+      var seen = {};
+      allRows = [];
+      for (var r = 0; r < dataTable.data.length; r++) {
+        var row = [];
+        for (var c = 0; c < colIndices.length; c++) {
+          row.push(dataTable.data[r][colIndices[c]].formattedValue);
+        }
+        var key = row.join('\x00');
+        if (!seen[key]) {
+          seen[key] = true;
+          allRows.push(row);
+        }
+      }
+
+      // Validate: "(All)" must not be a real value
+      for (var ri = 0; ri < allRows.length; ri++) {
+        for (var ci = 0; ci < allRows[ri].length; ci++) {
+          if (allRows[ri][ci] === ALL) {
+            showError('Invalid data: the value "(All)" exists in field "' + fieldNames[ci] + '". This value is reserved.');
+            return;
+          }
+        }
+      }
+
+      // Validate proper hierarchy
+      var err = validateHierarchy();
+      if (err) { showError(err); return; }
+
+      // Build UI and initialize dropdowns
+      buildUI();
+      initializeDropdowns();
+      syncAllParams();
+      showContainer();
+    }).catch(function (e) {
+      showError('Error loading data: ' + e.message);
+    });
+  }
+
+  // ── Validate that fields form a proper hierarchy ───────────────────────
+  function validateHierarchy() {
+    // For each field N+1 value, it must map to exactly one field N value.
+    for (var level = 1; level < fieldNames.length; level++) {
+      var childToParent = {};
+      for (var r = 0; r < allRows.length; r++) {
+        var child = allRows[r][level];
+        var parent = allRows[r][level - 1];
+        if (childToParent[child] === undefined) {
+          childToParent[child] = parent;
+        } else if (childToParent[child] !== parent) {
+          return 'Invalid hierarchy: ' + fieldNames[level] + ' "' + child +
+            '" occurs with ' + fieldNames[level - 1] + ' "' + childToParent[child] +
+            '" and ' + fieldNames[level - 1] + ' "' + parent + '".';
+        }
+      }
+    }
+    return null;
+  }
+
+  // ── Build the dropdown UI ──────────────────────────────────────────────
+  function buildUI() {
+    var container = $('#container').empty();
+    for (var i = 0; i < fieldNames.length; i++) {
+      var col = $('<div class="cascade-col">');
+      col.append($('<label>').text(titles[i]));
+      var sel = $('<select>').attr('data-level', i);
+      sel.on('change', onDropdownChange);
+      col.append(sel);
+      container.append(col);
+    }
+  }
+
+  // ── Compute options for a dropdown (rule 2) ────────────────────────────
+  // Returns sorted unique values of field at `level`, filtered by the
+  // "effective parent" selection.
+  function computeOptions(level) {
+    var filteredRows = allRows;
+
+    // Find the effective constraining dropdown: the nearest non-(All)
+    // ancestor, per rule 2.
+    if (level > 0) {
+      var constrainLevel = -1;
+      for (var k = level - 1; k >= 0; k--) {
+        if (selections[k] !== ALL) { constrainLevel = k; break; }
+      }
+      if (constrainLevel >= 0) {
+        var constrainVal = selections[constrainLevel];
+        filteredRows = filteredRows.filter(function (row) {
+          return row[constrainLevel] === constrainVal;
+        });
+      }
+    }
+
+    // Collect unique values at this level
+    var vals = {};
+    filteredRows.forEach(function (row) { vals[row[level]] = true; });
+    var sorted = Object.keys(vals).sort();
+
+    // Prepend (All) if at least two options
+    if (sorted.length >= 2) {
+      sorted.unshift(ALL);
+    }
+    return sorted;
+  }
+
+  // ── Initialise all dropdowns (rule 2) ──────────────────────────────────
+  function initializeDropdowns() {
+    selections = [];
+    optionLists = [];
+    for (var i = 0; i < fieldNames.length; i++) {
+      var opts = computeOptions(i);
+      optionLists[i] = opts;
+      selections[i] = opts[0]; // select first (rule 2)
+      populateSelect(i, opts, opts[0]);
+    }
+  }
+
+  // ── Populate a <select> element ────────────────────────────────────────
+  function populateSelect(level, options, selectedVal) {
+    var sel = $('select[data-level="' + level + '"]').empty();
+    options.forEach(function (v) {
+      sel.append($('<option>').val(v).text(v));
+    });
+    sel.val(selectedVal);
+  }
+
+  // ── Handle user changing a dropdown (rule 3) ───────────────────────────
+  function onDropdownChange() {
+    var level = parseInt($(this).attr('data-level'), 10);
+    var newVal = $(this).val();
+    selections[level] = newVal;
+
+    if (newVal !== ALL) {
+      // Rule 3B-D: reverse-fill ancestors from the selected value
+      reverseAncestors(level, newVal);
+      // Rule 3E: recompute this dropdown's options without changing selection
+      var opts = computeOptions(level);
+      optionLists[level] = opts;
+      populateSelect(level, opts, newVal);
+    }
+
+    // Rule 3A: cascade forward from level+1 onward
+    cascadeForward(level + 1);
+
+    syncAllParams();
+  }
+
+  // ── Rule 3B-D: Set ancestors to the unique value that matches ──────────
+  function reverseAncestors(changedLevel, changedVal) {
+    // Find a row where field[changedLevel] === changedVal
+    var matchRow = allRows.find(function (row) { return row[changedLevel] === changedVal; });
+    if (!matchRow) return;
+
+    // Rule 3B: set dropdown #0 (field #1 in spec) to the matching value
+    // Rule 3C-D: for dropdowns #1 .. #changedLevel-1, recompute options
+    //   then select the value that matches.
+    for (var k = 0; k < changedLevel; k++) {
+      var ancestorVal = matchRow[k];
+      selections[k] = ancestorVal;
+
+      if (k === 0) {
+        // Don't recompute options for level 0 — it always has all values
+        // Just select the value.
+        populateSelect(k, optionLists[k], ancestorVal);
+      } else {
+        var opts = computeOptions(k);
+        optionLists[k] = opts;
+        populateSelect(k, opts, ancestorVal);
+      }
+    }
+  }
+
+  // ── Rule 3A: recompute and select first, cascading forward ─────────────
+  function cascadeForward(startLevel) {
+    for (var i = startLevel; i < fieldNames.length; i++) {
+      var opts = computeOptions(i);
+      optionLists[i] = opts;
+      selections[i] = opts[0]; // select first
+      populateSelect(i, opts, opts[0]);
+    }
+  }
+
+  // ── Rule 4: sync all parameters to current selections ──────────────────
+  function syncAllParams() {
+    suppressParamListener = true;
+    var promises = [];
+    for (var i = 0; i < paramObjects.length; i++) {
+      promises.push(paramObjects[i].changeValueAsync(selections[i]));
+    }
+    Promise.all(promises).then(function () {
+      suppressParamListener = false;
+    }).catch(function () {
+      suppressParamListener = false;
+    });
+  }
+
+  // ── Rule 5: external parameter change listener ─────────────────────────
+  function onExternalParamChange() {
+    if (suppressParamListener) return;
+    checkForExternalChanges();
+  }
+
+  // ── Rule 5 (polling fallback): check params once per second ────────────
+  function pollForParamChanges() {
+    if (suppressParamListener) return;
+    if (paramObjects.length === 0) return;
+    checkForExternalChanges();
+  }
+
+  function checkForExternalChanges() {
+    // Read all current parameter values
+    var dashboard = tableau.extensions.dashboardContent.dashboard;
+    var promises = paramNames.map(function (name) {
+      return dashboard.findParameterAsync(name);
+    });
+    Promise.all(promises).then(function (params) {
+      if (suppressParamListener) return;
+
+      // Collect all mismatches between current selections and parameter values.
+      var mismatches = [];
+      for (var i = 0; i < params.length; i++) {
+        var paramVal = params[i].currentValue.value;
+        if (paramVal !== selections[i]) {
+          mismatches.push({ level: i, value: paramVal });
+        }
+      }
+
+      if (mismatches.length === 0) return;
+
+      // Specific values propagate upward (reverse-fill), so take the deepest.
+      // "(All)" propagates downward (cascade-forward), so take the shallowest.
+      // Strategy: pick the deepest mismatch with a specific (non-All) value.
+      // If every mismatch is "(All)", pick the shallowest instead.
+      var chosen;
+      for (var d = mismatches.length - 1; d >= 0; d--) {
+        if (mismatches[d].value !== ALL) { chosen = mismatches[d]; break; }
+      }
+      if (!chosen) chosen = mismatches[0]; // all are (All); take shallowest
+
+      var level = chosen.level;
+      var val = chosen.value;
+
+      // Verify the value exists in the dataset (or is the special "(All)" token)
+      var exists = val === ALL || allRows.some(function (row) {
+        return row[level] === val;
+      });
+      if (!exists) return;
+
+      selections[level] = val;
+
+      if (val !== ALL) {
+        reverseAncestors(level, val);
+        var opts = computeOptions(level);
+        optionLists[level] = opts;
+        populateSelect(level, opts, val);
+      } else {
+        populateSelect(level, optionLists[level], ALL);
+      }
+
+      cascadeForward(level + 1);
+      syncAllParams();
+    });
+  }
+
+  // ── UI helpers ─────────────────────────────────────────────────────────
+  function showMessage(msg) {
+    $('#message').text(msg).show();
+    $('#error').hide();
+    $('#container').hide();
+    $('#refresh-btn').hide();
+  }
+
+  function showError(msg) {
+    $('#error').text(msg).show();
+    $('#message').hide();
+    $('#container').hide();
+    $('#refresh-btn').hide();
+  }
+
+  function showContainer() {
+    $('#container').show();
+    $('#refresh-btn').show();
+    $('#message').hide();
+    $('#error').hide();
+  }
+})();
+</script>
+</body>
+</html>
