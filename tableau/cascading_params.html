@@ -38,7 +38,6 @@
   var optionLists = [];   // current option arrays per dropdown (string[])
   var paramObjects = [];  // resolved Tableau Parameter objects
   var suppressParamListener = false;
-  var pollTimer   = null;
 
   var ALL = '(All)';
 
@@ -108,9 +107,6 @@
       paramObjects.forEach(function (p) {
         p.addEventListener(tableau.TableauEventType.ParameterChanged, onExternalParamChange);
       });
-      // Fallback polling (rule 5 fallback)
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(pollForParamChanges, 1000);
     });
   }
 
@@ -328,13 +324,6 @@
   // ── Rule 5: external parameter change listener ─────────────────────────
   function onExternalParamChange() {
     if (suppressParamListener) return;
-    checkForExternalChanges();
-  }
-
-  // ── Rule 5 (polling fallback): check params once per second ────────────
-  function pollForParamChanges() {
-    if (suppressParamListener) return;
-    if (paramObjects.length === 0) return;
     checkForExternalChanges();
   }
 
