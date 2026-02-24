@@ -122,12 +122,12 @@ This raises an error: `Invalid hierarchy: City "Portland" occurs with State "Mai
     - Drop-down #1 contains all possible values of field #1 in the database.
         - List them in alphabetical order.
         - If this results in at least two options, add the option "(All)" and put it first in the list.
-        - Select the first option in the list.
+        - Select the current value of parameter #1 if it's in the list, or the first value in the list otherwise.
     - Drop-down #N contains all values of field #N which occur with the selected value of field #N-1 from drop-down #N-1.
         - If the selected value of drop-down #N-1 is "(All)", then match to drop-down #N-2 instead. If that is "(All)", match to #N-3, et cetera. If all previous drop-downs are set to "(All)", then use all values of field #N.
         - List them in alphabetical order.
         - If this results in at least two options, add the option "(All)" and put it first in the list.
-        - Select the first option in the list.
+        - Select the current value of parameter #N if it's in the list, or the first value in the list otherwise.
 
 3. Whenever the user changes the selected value of drop-down #N:
     - A) For drop-down #N+1, recompute its contents, then select the first value in the updated list. Then repeat for drop-down #N+2, then #N+3, et cetera.
