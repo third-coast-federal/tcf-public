@@ -7,60 +7,40 @@
   <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js"></script>
   <style>
-    body { margin: 0; padding: 0; overflow: visible; line-height: normal; font-family: Arial, sans-serif; font-size: 12px; color: #333; }
+    body *, body *::before, body *::after { all: initial; box-sizing: border-box; }
+    body script { display: none !important; }
+    body { display: block; margin: 0; padding: 0; overflow: hidden; line-height: normal; font-family: Arial, sans-serif; font-size: 12px; color: #333; }
     #container { display: flex; flex-wrap: nowrap; gap: 0; align-items: flex-start; width: 100%; }
     .cascade-col { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; padding: 0 7px; }
     .cascade-col:first-child { padding-left: 3px; }
     .cascade-col:last-child { padding-right: 3px; }
 
-    /* Title — fallback styles */
-    .Title { margin: 0; }
+    /* Title */
+    .Title { display: block; margin: 0; }
     .ParamTitle {
+      display: block;
       font-family: 'Tableau Medium', 'Tableau', Arial, sans-serif;
       font-size: 12px; line-height: 18px; color: rgb(51, 51, 51);
       font-weight: normal; font-style: normal; text-decoration: none;
-      margin: 0; padding: 0;
+      margin: 0 0 0 -3px; padding: 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
-    /* Combo box — fallback styles */
-    .tabComboBox {
-      display: flex; align-items: center;
-      border: 1px solid #b4b4b4; border-radius: 2px;
-      background: #fff; cursor: pointer; user-select: none; width: 100%;
-    }
-    .tabComboBoxNameContainer {
-      flex: 1; overflow: hidden; padding: 1px 0 2px 3px;
-    }
-    .tabComboBoxName {
+    /* Select — styled to match Tableau combo box */
+    .cascade-col select {
+      display: block; width: 100%;
       font-family: 'Tableau Book', 'Tableau', Arial, sans-serif;
       font-size: 9pt; color: #333;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
+      border: 1px solid rgb(51, 51, 51); border-radius: 2px;
+      background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M4.9,6.9L2.1,3.3C2,3.2,2.1,3,2.2,3h5.6C8,3,8.1,3.2,8,3.3L5.2,6.9C5.1,7,4.9,7,4.9,6.9z'/%3E%3C/svg%3E") no-repeat right 5px center;
+      padding: 1px 14px 2px 3px;
+      cursor: pointer; appearance: none; -webkit-appearance: none;
     }
-    .tabComboBoxButtonHolder {
-      display: flex; align-items: center; padding: 0 4px;
-    }
-    .tabComboBoxButton svg { display: block; }
-
-    /* Dropdown menu — fallback styles */
-    .tabMenu {
-      position: absolute; background: #fff; border: 1px solid #b4b4b4;
-      z-index: 999; overflow-y: auto; max-height: 300px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-    }
-    .tabMenuItem {
-      padding: 4px 8px; cursor: pointer; white-space: nowrap;
-    }
-    .tabMenuItemName {
-      font-family: 'Tableau Book', 'Tableau', Arial, sans-serif;
-      font-size: 9pt; color: #333;
-    }
-    .tabMenuFocusedItem { background: #D7D7D7; }
 
     /* Utility */
-    #message { padding: 8px; }
-    #error { color: #c00; padding: 8px; white-space: pre-wrap; }
-    #refresh-btn { position: fixed; top: 4px; right: 4px; background: none; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 11px; padding: 2px 6px; color: #666; }
+    #message { display: block; font-family: inherit; font-size: inherit; color: inherit; padding: 8px; }
+    #error { display: block; font-family: inherit; font-size: inherit; color: #c00; padding: 8px; white-space: pre-wrap; }
+    #refresh-btn { display: block; position: fixed; top: 4px; right: 4px; background: none; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-family: inherit; font-size: 11px; padding: 2px 6px; color: #666; }
     #refresh-btn:hover { background: #eee; }
   </style>
 </head>
@@ -86,11 +66,6 @@
 
   var ALL = '(All)';
 
-  var ARROW_SVG = '<svg focusable="false" version="1.1" xmlns="http://www.w3.org/2000/svg" ' +
-    'width="12px" height="12px" viewBox="0 0 12 12" xml:space="preserve">' +
-    '<path style="fill:rgb(51,51,51)" d="M4.9,6.9L2.1,3.3C2,3.2,2.1,3,2.2,3h5.6' +
-    'C8,3,8.1,3.2,8,3.3L5.2,6.9C5.1,7,4.9,7,4.9,6.9z"></path></svg>';
-
   // ── Initialisation ─────────────────────────────────────────────────────
   $(document).ready(function () {
     tableau.extensions.initializeAsync({ configure: openConfigure }).then(function () {
@@ -111,18 +86,6 @@
     });
 
     $('#refresh-btn').on('click', function () { loadHierarchyData(); });
-
-    // Close menus when clicking outside
-    $(document).on('click', function (e) {
-      if (!$(e.target).closest('.tabComboBox, .tabMenu').length) {
-        closeAllMenus();
-      }
-    });
-
-    // Keyboard: Escape closes menus
-    $(document).on('keydown', function (e) {
-      if (e.key === 'Escape') closeAllMenus();
-    });
   });
 
   function openConfigure() {
@@ -258,22 +221,14 @@
       titleDiv.append(h3);
       col.append(titleDiv);
 
-      // Combo box (Tableau structure)
-      var combo = $('<span class="tabComboBox tab-ctrl-formatted-widget tabComboStdTheme tabComboBoxNoIcon">')
-        .attr({ role: 'button', 'aria-expanded': 'false', 'aria-haspopup': 'true', tabindex: '0', 'data-level': i })
-        .css('user-select', 'none');
-
-      var nameContainer = $('<div class="tabComboBoxNameContainer tab-ctrl-formatted-fixedsize" aria-hidden="true">');
-      nameContainer.append($('<span class="tabComboBoxName">'));
-      combo.append(nameContainer);
-
-      var buttonHolder = $('<div class="tabComboBoxButtonHolder">');
-      buttonHolder.append($('<span class="tabComboBoxButton">').html(ARROW_SVG));
-      combo.append(buttonHolder);
-
-      combo.on('click', onComboClick);
-      combo.on('keydown', onComboKeydown);
-      col.append(combo);
+      // Native select
+      var sel = $('<select>').attr('data-level', i);
+      sel.on('change', function () {
+        var level = parseInt($(this).attr('data-level'), 10);
+        var newVal = $(this).val();
+        onDropdownChange(level, newVal);
+      });
+      col.append(sel);
 
       container.append(col);
     }
@@ -324,113 +279,13 @@
     }
   }
 
-  // ── Update combo box display text ──────────────────────────────────────
+  // ── Populate a <select> element ────────────────────────────────────────
   function populateSelect(level, options, selectedVal) {
-    var combo = $('.tabComboBox[data-level="' + level + '"]');
-    combo.find('.tabComboBoxName').text(selectedVal);
-    combo.attr('aria-label', titles[level] + ' ' + selectedVal);
-  }
-
-  // ── Handle user clicking a combo box ───────────────────────────────────
-  function onComboClick(e) {
-    e.stopPropagation();
-    var combo = $(this);
-    var level = parseInt(combo.attr('data-level'), 10);
-
-    // Toggle: if already open, close
-    if (combo.attr('aria-expanded') === 'true') {
-      closeAllMenus();
-      return;
-    }
-
-    closeAllMenus();
-    openMenu(level, combo);
-  }
-
-  function onComboKeydown(e) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      $(this).trigger('click');
-    }
-  }
-
-  // ── Open dropdown menu ─────────────────────────────────────────────────
-  function openMenu(level, combo) {
-    var menu = $('<div class="tabMenu tab-widget tabMenuComboDropdownTheme tab-ctrl-formatted-widget tabMenuNoIcons tabMenuNoDesc tabComboBoxMenu">')
-      .attr({ role: 'menu', tabindex: '-1' })
-      .css('user-select', 'none');
-
-    var content = $('<div class="tabMenuContent">');
-
-    optionLists[level].forEach(function (v) {
-      var classes = 'tabMenuItem tabMenuItemComboDropdownTheme tab-ctrl-formatted-text tabMenuMenuItem';
-      if (v === selections[level]) classes += ' tabMenuFocusedItem';
-
-      var item = $('<div>').attr({ 'class': classes, role: 'menuitem', 'data-value': v });
-      var nameArea = $('<div class="tabMenuItemNameArea">');
-      nameArea.append($('<span class="tabMenuItemName">').text(v));
-      item.append(nameArea);
-
-      item.on('click', function (e) {
-        e.stopPropagation();
-        closeAllMenus();
-        onDropdownChange(level, v);
-      });
-      item.on('mouseenter', function () {
-        menu.find('.tabMenuFocusedItem').removeClass('tabMenuFocusedItem');
-        $(this).addClass('tabMenuFocusedItem');
-      });
-
-      content.append(item);
+    var sel = $('select[data-level="' + level + '"]').empty();
+    options.forEach(function (v) {
+      sel.append($('<option>').val(v).text(v));
     });
-
-    menu.append(content);
-
-    // Position below the combo box
-    var offset = combo.offset();
-    var comboHeight = combo.outerHeight();
-    menu.css({
-      top: offset.top + comboHeight,
-      left: offset.left,
-      minWidth: combo.outerWidth()
-    });
-
-    $('body').append(menu);
-    combo.attr('aria-expanded', 'true');
-
-    // Keyboard navigation within menu
-    menu.on('keydown', function (e) {
-      var items = menu.find('.tabMenuItem');
-      var focused = menu.find('.tabMenuFocusedItem');
-      var idx = items.index(focused);
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (idx < items.length - 1) {
-          focused.removeClass('tabMenuFocusedItem');
-          items.eq(idx + 1).addClass('tabMenuFocusedItem');
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (idx > 0) {
-          focused.removeClass('tabMenuFocusedItem');
-          items.eq(idx - 1).addClass('tabMenuFocusedItem');
-        }
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        var val = focused.attr('data-value');
-        if (val !== undefined) {
-          closeAllMenus();
-          onDropdownChange(level, val);
-        }
-      }
-    });
-    menu.focus();
-  }
-
-  function closeAllMenus() {
-    $('.tabMenu').remove();
-    $('.tabComboBox').attr('aria-expanded', 'false');
+    sel.val(selectedVal);
   }
 
   // ── Handle user changing a dropdown (rule 3) ───────────────────────────
@@ -444,8 +299,6 @@
       var opts = computeOptions(level);
       optionLists[level] = opts;
       populateSelect(level, opts, newVal);
-    } else {
-      populateSelect(level, optionLists[level], newVal);
     }
 
     // Rule 3A: cascade forward from level+1 onward
