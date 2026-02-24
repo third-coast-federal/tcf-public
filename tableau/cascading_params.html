@@ -268,13 +268,37 @@
 
   // ── Initialise all dropdowns (rule 2) ──────────────────────────────────
   function initializeDropdowns() {
+    // First pass: default everything to first option
     selections = [];
     optionLists = [];
     for (var i = 0; i < fieldNames.length; i++) {
       var opts = computeOptions(i);
       optionLists[i] = opts;
-      selections[i] = opts[0]; // select first (rule 2)
+      selections[i] = opts[0];
       populateSelect(i, opts, opts[0]);
+    }
+
+    // Second pass: read current parameter values and honour them if valid.
+    // Find the deepest parameter with a specific (non-All) value that exists
+    // in the data, then apply it — reverse-filling ancestors and cascading
+    // forward — so the dropdowns reflect the dashboard's existing state.
+    var deepestSpecific = -1;
+    for (var i = paramObjects.length - 1; i >= 0; i--) {
+      var pv = paramObjects[i].currentValue.value;
+      if (pv !== ALL && allRows.some(function (row) { return row[i] === pv; })) {
+        deepestSpecific = i;
+        break;
+      }
+    }
+
+    if (deepestSpecific >= 0) {
+      var val = paramObjects[deepestSpecific].currentValue.value;
+      selections[deepestSpecific] = val;
+      reverseAncestors(deepestSpecific, val);
+      var opts = computeOptions(deepestSpecific);
+      optionLists[deepestSpecific] = opts;
+      populateSelect(deepestSpecific, opts, val);
+      cascadeForward(deepestSpecific + 1);
     }
   }
 
