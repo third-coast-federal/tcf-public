@@ -146,5 +146,9 @@ This raises an error: `Invalid hierarchy: City "Portland" occurs with State "Mai
 
 6. The extension configuration dialog includes a button to manually refresh hierarchy data. Otherwise the data is assumed to be static after workbook load.
 
+# CUSTOMIZATION
+- The creator can customize the title of each drop-down. By default, it uses the name of the dimension in that drop-down.
+- The creator can set the drop-downs to stack top to bottom instead of left to right.
+
 # HOSTING
 This extension is published in a public GitHub repo. The organization is third-coast-federal and the repo is tcf-public.

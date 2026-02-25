@@ -31,6 +31,8 @@
     #error { color: #c00; margin-top: 8px; display: none; }
     #status { color: #888; font-size: 11px; margin-top: 8px; white-space: pre-wrap; }
     .section { margin-bottom: 16px; }
+    .checkbox-label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin-top: 0; cursor: pointer; }
+    .checkbox-label input[type="checkbox"] { margin: 0; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -52,6 +54,10 @@
     </div>
     <div id="levels"></div>
     <button class="add" id="addLevel">+ Add Level</button>
+  </div>
+
+  <div class="section">
+    <label class="checkbox-label"><input type="checkbox" id="stackVertically"> Stack dropdowns top to bottom</label>
   </div>
 
   <div id="error"></div>
@@ -193,6 +199,7 @@
           addLevel();
         }
       }
+      $('#stackVertically').prop('checked', settings.stackVertically === 'true');
       validateForm();
     }
 
@@ -294,6 +301,7 @@
       s.erase('configured');
       s.erase('worksheet');
       s.erase('levelCount');
+      s.erase('stackVertically');
       for (var i = 0; i < 20; i++) {
         s.erase('field_' + i);
         s.erase('param_' + i);
@@ -310,6 +318,7 @@
         s.set('param_' + i, $(this).find('.param-select').val());
         s.set('title_' + i, $(this).find('.title-input').val().trim());
       });
+      s.set('stackVertically', $('#stackVertically').prop('checked') ? 'true' : 'false');
 
       s.saveAsync().then(function () {
         tableau.extensions.ui.closeDialog('configured');

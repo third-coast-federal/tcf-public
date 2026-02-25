@@ -36,6 +36,10 @@
       overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
     }
 
+    /* Vertical (stacked) layout */
+    body.stack-vertical #container { flex-direction: column; }
+    body.stack-vertical .cascade-col { flex: 0 0 auto; padding: 0 3px; }
+
     /* Utility */
     #message { display: block; font-family: inherit; font-size: inherit; color: inherit; padding: 8px; }
     #error { display: block; font-family: inherit; font-size: inherit; color: #c00; padding: 8px; white-space: pre-wrap; }
@@ -98,6 +102,12 @@
     var settings = tableau.extensions.settings.getAll();
     var n = parseInt(settings.levelCount, 10);
     if (!n || n < 2) { showError('Configuration incomplete. Please reconfigure.'); return; }
+
+    if (settings.stackVertically === 'true') {
+      document.body.classList.add('stack-vertical');
+    } else {
+      document.body.classList.remove('stack-vertical');
+    }
 
     wsName = settings.worksheet;
     fieldNames = [];
