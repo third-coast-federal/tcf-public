@@ -25,7 +25,6 @@
     var targetParamName = '';
     var sources         = [];   // [{ ws, field }]
     var targetParam     = null; // resolved Tableau Parameter object
-    var allParams       = [];   // all dashboard parameters (for listening)
     var suppressRecompute = false;
 
     /* ── Helpers ────────────────────────────────────────────── */
@@ -79,19 +78,22 @@
     function resolveParametersAndListen() {
       var dashboard = tableau.extensions.dashboardContent.dashboard;
 
-      dashboard.getParametersAsync().then(function (params) {
-        allParams = params;
-        targetParam = params.find(function (p) { return p.name === targetParamName; });
+      dashboard.findParameterAsync(targetParamName).then(function (param) {
+        targetParam = param;
 
         if (!targetParam) {
           showError('Parameter "' + targetParamName + '" not found.');
           return;
         }
 
-        // Listen for changes to every *other* parameter
-        params.forEach(function (p) {
-          if (p.name !== targetParamName) {
-            p.addEventListener(tableau.TableauEventType.ParameterChanged, onOtherParamChanged);
+        // Listen for SummaryDataChanged on each source worksheet
+        var wsNames = [];
+        sources.forEach(function (src) {
+          if (wsNames.indexOf(src.ws) !== -1) return; // already listening
+          wsNames.push(src.ws);
+          var ws = dashboard.worksheets.find(function (w) { return w.name === src.ws; });
+          if (ws) {
+            ws.addEventListener(tableau.TableauEventType.SummaryDataChanged, recompute);
           }
         });
 
@@ -164,10 +166,6 @@
       return max;
     }
 
-    /* ── Handle changes to other parameters ────────────────── */
-    function onOtherParamChanged() {
-      recompute();
-    }
   </script>
 </body>
 </html>
