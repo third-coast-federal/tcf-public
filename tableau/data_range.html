@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Data Range</title>
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js"></script>
+  <style>
+    body {
+      display: block; margin: 0; padding: 0; overflow: hidden;
+      background: #fff;
+      font-family: Arial, sans-serif; font-size: 12px; color: #333;
+    }
+    #error {
+      display: block; font-family: inherit; font-size: inherit;
+      color: #c00; padding: 8px; white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="error"></div>
+
+  <script>
+    /* ── State ──────────────────────────────────────────────── */
+    var targetParamName = '';
+    var sources         = [];   // [{ ws, field }]
+    var targetParam     = null; // resolved Tableau Parameter object
+    var allParams       = [];   // all dashboard parameters (for listening)
+    var suppressRecompute = false;
+
+    /* ── Helpers ────────────────────────────────────────────── */
+    function showError(msg) { $('#error').text(msg); }
+    function clearError()   { $('#error').text(''); }
+
+    /* ── Initialisation ────────────────────────────────────── */
+    $(document).ready(function () {
+      tableau.extensions.initializeAsync({ configure: openConfigure }).then(function () {
+        var settings = tableau.extensions.settings.getAll();
+        if (settings.configured === 'true') {
+          setup();
+        }
+
+        // Re-setup when settings change (e.g. after configure dialog closes)
+        tableau.extensions.settings.addEventListener(
+          tableau.TableauEventType.SettingsChanged, function () {
+            var s = tableau.extensions.settings.getAll();
+            if (s.configured === 'true') setup();
+          }
+        );
+      });
+    });
+
+    function openConfigure() {
+      var configUrl = window.location.href.replace(/data_range\.html.*/, 'data_range_config.html');
+      tableau.extensions.ui.displayDialogAsync(configUrl, '', { height: 500, width: 500 });
+    }
+
+    /* ── Setup from saved settings ─────────────────────────── */
+    function setup() {
+      clearError();
+      var s = tableau.extensions.settings.getAll();
+
+      targetParamName = s.targetParam || '';
+      var count = parseInt(s.sourceCount, 10) || 0;
+      sources = [];
+      for (var i = 0; i < count; i++) {
+        sources.push({ ws: s['ws_' + i], field: s['field_' + i] });
+      }
+
+      if (!targetParamName || sources.length === 0) {
+        showError('Configuration incomplete. Right-click and choose "Configure".');
+        return;
+      }
+
+      resolveParametersAndListen();
+    }
+
+    /* ── Resolve target parameter & attach listeners ────────── */
+    function resolveParametersAndListen() {
+      var dashboard = tableau.extensions.dashboardContent.dashboard;
+
+      dashboard.getParametersAsync().then(function (params) {
+        allParams = params;
+        targetParam = params.find(function (p) { return p.name === targetParamName; });
+
+        if (!targetParam) {
+          showError('Parameter "' + targetParamName + '" not found.');
+          return;
+        }
+
+        // Listen for changes to every *other* parameter
+        params.forEach(function (p) {
+          if (p.name !== targetParamName) {
+            p.addEventListener(tableau.TableauEventType.ParameterChanged, onOtherParamChanged);
+          }
+        });
+
+        // Initial computation
+        recompute();
+      });
+    }
+
+    /* ── Recompute the max value and store in parameter ────── */
+    function recompute() {
+      if (suppressRecompute) return;
+
+      var dashboard = tableau.extensions.dashboardContent.dashboard;
+      var promises = [];
+
+      sources.forEach(function (src) {
+        var ws = dashboard.worksheets.find(function (w) { return w.name === src.ws; });
+        if (!ws) {
+          showError('Worksheet "' + src.ws + '" not found.');
+          return;
+        }
+        promises.push(
+          ws.getSummaryDataAsync().then(function (dt) {
+            return extractMax(dt, src.field);
+          })
+        );
+      });
+
+      Promise.all(promises).then(function (maxValues) {
+        // Filter out nulls (in case a worksheet had no matching data)
+        var valid = maxValues.filter(function (v) { return v !== null && !isNaN(v); });
+        if (valid.length === 0) {
+          showError('No numeric data found in any source.');
+          return;
+        }
+
+        var globalMax = Math.max.apply(null, valid);
+
+        suppressRecompute = true;
+        targetParam.changeValueAsync(globalMax).then(function () {
+          suppressRecompute = false;
+          clearError();
+        }).catch(function (e) {
+          suppressRecompute = false;
+          showError('Error setting parameter: ' + e.message);
+        });
+      }).catch(function (e) {
+        showError('Error loading data: ' + e.message);
+      });
+    }
+
+    /* ── Extract the maximum value of a field from a data table */
+    function extractMax(dataTable, fieldName) {
+      var colIdx = -1;
+      for (var c = 0; c < dataTable.columns.length; c++) {
+        if (dataTable.columns[c].fieldName === fieldName) {
+          colIdx = dataTable.columns[c].index;
+          break;
+        }
+      }
+      if (colIdx === -1) return null;
+
+      var max = null;
+      for (var r = 0; r < dataTable.data.length; r++) {
+        var val = parseFloat(dataTable.data[r][colIdx].value);
+        if (!isNaN(val)) {
+          if (max === null || val > max) max = val;
+        }
+      }
+      return max;
+    }
+
+    /* ── Handle changes to other parameters ────────────────── */
+    function onOtherParamChanged() {
+      recompute();
+    }
+  </script>
+</body>
+</html>

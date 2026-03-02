@@ -1,5 +1,5 @@
 # OVERVIEW
-The purpose of this extension is to let the user populate parameter values from a hierarchy, using cascading drop-down menus. Each selection cascades to the next menu in the hierarchy. We require that the data forms a proper hierarchy, i.e., each item in a branch must correspond to exactly one item in the previous branch.
+The purpose of this Tableau extension is to let the user populate parameter values from a hierarchy, using cascading drop-down menus. Each selection cascades to the next menu in the hierarchy. We require that the data forms a proper hierarchy, i.e., each item in a branch must correspond to exactly one item in the previous branch.
 
 Upon creating an instance of this extension, the creator selects two or more fields from a data source, and specifies an ordering for those fields.
 - The field can be a formula, or it can be straight from the data source.

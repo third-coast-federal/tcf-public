@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Data Range – Configure</title>
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #333; padding: 16px; }
+    h3 { margin-bottom: 12px; font-size: 15px; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; margin-top: 12px; }
+    select { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+
+    .source-row {
+      display: flex; gap: 6px; align-items: flex-end; margin-bottom: 8px;
+      padding: 8px; background: #f7f7f7; border-radius: 4px;
+    }
+    .source-row select { flex: 1; }
+    .source-row .source-num { font-weight: 700; min-width: 16px; padding-bottom: 6px; }
+
+    .col-headers {
+      display: flex; gap: 6px; padding: 0 8px; margin-bottom: 2px;
+      font-size: 11px; color: #888; font-weight: 600;
+    }
+
+    .btn-row { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
+    button { padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px; background: #fff; }
+    button.primary { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+    button.primary:disabled { background: #a0c4e8; border-color: #a0c4e8; cursor: default; }
+    button.add { background: #e8e8e8; }
+    button.remove { background: none; border: none; color: #c00; font-size: 16px; padding: 2px 6px; min-width: 28px; }
+
+    #error { color: #c00; margin-top: 8px; display: none; }
+    #status { color: #888; font-size: 11px; margin-top: 8px; white-space: pre-wrap; }
+
+    .section { margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h3>Data Range Configuration</h3>
+
+  <!-- Target parameter -->
+  <div class="section">
+    <label>Target Parameter (numeric, free-form)</label>
+    <select id="paramSelect"><option value="">-- loading --</option></select>
+  </div>
+
+  <!-- Worksheet / field sources -->
+  <div class="section">
+    <label>Data Sources</label>
+    <p style="font-size:11px; color:#888; margin-bottom:8px;">
+      Choose one or more worksheet + numeric field pairs. The extension will take the max across all of them.
+    </p>
+    <div class="col-headers">
+      <span style="min-width:16px;"></span>
+      <span style="flex:1;">Worksheet</span>
+      <span style="flex:1;">Field</span>
+      <span style="min-width:28px;"></span>
+    </div>
+    <div id="sources"></div>
+    <button class="add" id="addSource">+ Add source</button>
+  </div>
+
+  <div id="error"></div>
+  <div id="status"></div>
+
+  <div class="btn-row">
+    <button id="cancelBtn">Cancel</button>
+    <button class="primary" id="submitBtn">OK</button>
+  </div>
+
+  <script>
+    var worksheets = [];
+    var parameters = [];
+    var sourceCount = 0;
+    // Cache fields per worksheet name: { wsName: [{ fieldName, dataType }] }
+    var fieldCache = {};
+
+    function log(msg) { $('#status').text(msg); }
+    function showError(msg) { $('#error').text(msg).show(); }
+    function clearError() { $('#error').hide(); }
+
+    $(document).ready(function () {
+      tableau.extensions.initializeDialogAsync().then(function () {
+        var dashboard = tableau.extensions.dashboardContent.dashboard;
+
+        worksheets = dashboard.worksheets;
+
+        dashboard.getParametersAsync().then(function (params) {
+          // Only free-form numeric parameters
+          parameters = params.filter(function (p) {
+            return p.allowableValues.type === 'all' &&
+              (p.dataType === 'float' || p.dataType === 'int');
+          });
+
+          populateParamSelect();
+          restoreSettings();
+        });
+      });
+
+      $('#addSource').on('click', function () { addSource(); });
+      $('#cancelBtn').on('click', function () { tableau.extensions.ui.closeDialog(''); });
+      $('#submitBtn').on('click', function () { submit(); });
+    });
+
+    /* ── Parameter dropdown ─────────────────────────────────── */
+    function populateParamSelect() {
+      var $sel = $('#paramSelect').empty();
+      if (parameters.length === 0) {
+        $sel.append('<option value="">No numeric free-form parameters found</option>');
+        return;
+      }
+      parameters.forEach(function (p) {
+        $sel.append($('<option>').val(p.name).text(p.name + ' (' + p.dataType + ')'));
+      });
+    }
+
+    /* ── Restore previously saved settings ──────────────────── */
+    function restoreSettings() {
+      var s = tableau.extensions.settings.getAll();
+      if (s.configured !== 'true') {
+        addSource();
+        return;
+      }
+
+      if (s.targetParam) $('#paramSelect').val(s.targetParam);
+
+      var count = parseInt(s.sourceCount, 10) || 0;
+      for (var i = 0; i < count; i++) {
+        addSource(s['ws_' + i], s['field_' + i]);
+      }
+      if (count === 0) addSource();
+    }
+
+    /* ── Add a source row ───────────────────────────────────── */
+    function addSource(savedWs, savedField) {
+      sourceCount++;
+      var idx = sourceCount;
+      var $row = $('<div class="source-row" data-idx="' + idx + '">');
+      $row.append('<span class="source-num">' + idx + '</span>');
+
+      // Worksheet select
+      var $ws = $('<select class="ws-select">');
+      worksheets.forEach(function (w) {
+        $ws.append($('<option>').val(w.name).text(w.name));
+      });
+      if (savedWs) $ws.val(savedWs);
+      $row.append($ws);
+
+      // Field select (populated after worksheet selection)
+      var $field = $('<select class="field-select"><option value="">-- select field --</option></select>');
+      $row.append($field);
+
+      // Remove button
+      var $remove = $('<button class="remove" title="Remove">&times;</button>');
+      $remove.on('click', function () { $row.remove(); renumber(); });
+      $row.append($remove);
+
+      $('#sources').append($row);
+
+      // When worksheet changes, reload fields
+      $ws.on('change', function () {
+        loadFieldsForRow($row);
+      });
+
+      // Trigger initial field load
+      loadFieldsForRow($row, savedField);
+    }
+
+    /* ── Load numeric fields for a source row ───────────────── */
+    function loadFieldsForRow($row, savedField) {
+      var wsName = $row.find('.ws-select').val();
+      var $field = $row.find('.field-select');
+      $field.empty().append('<option value="">-- loading --</option>');
+
+      if (fieldCache[wsName]) {
+        populateFieldSelect($field, fieldCache[wsName], savedField);
+        return;
+      }
+
+      var ws = worksheets.find(function (w) { return w.name === wsName; });
+      if (!ws) return;
+
+      ws.getSummaryDataAsync().then(function (dt) {
+        var fields = [];
+        dt.columns.forEach(function (col) {
+          if (col.dataType === 'float' || col.dataType === 'int') {
+            fields.push({ fieldName: col.fieldName, dataType: col.dataType });
+          }
+        });
+        fieldCache[wsName] = fields;
+        populateFieldSelect($field, fields, savedField);
+      }).catch(function () {
+        $field.empty().append('<option value="">-- error loading fields --</option>');
+      });
+    }
+
+    function populateFieldSelect($field, fields, savedField) {
+      $field.empty();
+      if (fields.length === 0) {
+        $field.append('<option value="">No numeric fields found</option>');
+        return;
+      }
+      fields.forEach(function (f) {
+        $field.append($('<option>').val(f.fieldName).text(f.fieldName + ' (' + f.dataType + ')'));
+      });
+      if (savedField) $field.val(savedField);
+    }
+
+    /* ── Renumber rows after deletion ───────────────────────── */
+    function renumber() {
+      $('#sources .source-row').each(function (i) {
+        $(this).find('.source-num').text(i + 1);
+      });
+    }
+
+    /* ── Validate and submit ────────────────────────────────── */
+    function submit() {
+      clearError();
+
+      var targetParam = $('#paramSelect').val();
+      if (!targetParam) { showError('Please select a target parameter.'); return; }
+
+      var $rows = $('#sources .source-row');
+      if ($rows.length === 0) { showError('Please add at least one data source.'); return; }
+
+      var sources = [];
+      var valid = true;
+      $rows.each(function () {
+        var ws = $(this).find('.ws-select').val();
+        var field = $(this).find('.field-select').val();
+        if (!ws || !field) { valid = false; return false; }
+        sources.push({ ws: ws, field: field });
+      });
+      if (!valid) { showError('Each source must have a worksheet and field selected.'); return; }
+
+      // Check for duplicate worksheet+field pairs
+      var seen = {};
+      for (var i = 0; i < sources.length; i++) {
+        var key = sources[i].ws + '\x00' + sources[i].field;
+        if (seen[key]) { showError('Duplicate source: ' + sources[i].ws + ' / ' + sources[i].field); return; }
+        seen[key] = true;
+      }
+
+      // Save settings
+      var s = tableau.extensions.settings;
+      s.set('configured', 'true');
+      s.set('targetParam', targetParam);
+      s.set('sourceCount', sources.length.toString());
+      for (var j = 0; j < sources.length; j++) {
+        s.set('ws_' + j, sources[j].ws);
+        s.set('field_' + j, sources[j].field);
+      }
+
+      // Clean up old keys that may exceed new count
+      for (var k = sources.length; k < 20; k++) {
+        s.erase('ws_' + k);
+        s.erase('field_' + k);
+      }
+
+      s.saveAsync().then(function () {
+        tableau.extensions.ui.closeDialog('configured');
+      }).catch(function (e) {
+        showError('Error saving: ' + e.message);
+      });
+    }
+  </script>
+</body>
+</html>
